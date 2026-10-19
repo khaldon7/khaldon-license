@@ -7,6 +7,9 @@
 <style>
 body{font-family:sans-serif;padding:14px;max-width:700px;margin:auto}
 textarea{width:100%;height:110px;font-family:monospace;font-size:12px;direction:ltr;box-sizing:border-box}
+select{width:100%;padding:10px;box-sizing:border-box;margin:4px 0;font-size:16px}
+.row{display:flex;gap:8px}.row>*{flex:1;min-width:0}
+#info{color:#0b6b5e;min-height:1.4em}#err{color:#a15c00;min-height:1.4em}
 input{width:100%;padding:10px;box-sizing:border-box;margin:4px 0;font-size:16px}
 button{width:100%;padding:12px;margin:6px 0;font-size:16px;background:#0b6b5e;color:#fff;border:0;border-radius:8px}
 section{border:1px solid #ccc;border-radius:8px;padding:10px;margin:12px 0}
@@ -25,8 +28,23 @@ section{border:1px solid #ccc;border-radius:8px;padding:10px;margin:12px 0}
 <p>المفتاح الخاص:</p>
 <textarea id="pk" placeholder="الصق المفتاح الخاص هنا"></textarea>
 <input id="dev" placeholder="رقم الجهاز">
-<input id="exp" type="date">
+<select id="mode">
+  <option value="dur">مدة من لحظة الإصدار</option>
+  <option value="date">حتى تاريخ محدد (نهاية اليوم)</option>
+</select>
+<div id="durBox" class="row">
+  <input id="num" type="number" min="1" value="1" inputmode="numeric">
+  <select id="unit">
+    <option value="m">دقيقة</option>
+    <option value="h">ساعة</option>
+    <option value="d" selected>يوم</option>
+    <option value="mo">شهر</option>
+    <option value="y">سنة</option>
+  </select>
+</div>
+<input id="exp" type="date" hidden>
 <button id="issue">إصدار الترخيص</button>
+<div id="info"></div><div id="err"></div>
 <p>الترخيص (انسخه وأرسله للعميل):</p>
 <textarea id="out" readonly></textarea>
 </section>
@@ -47,16 +65,48 @@ document.getElementById('gen').onclick = async () => {
   document.getElementById('pub').value = b64(await crypto.subtle.exportKey('spki', kp.publicKey));
 };
 
-document.getElementById('issue').onclick = async () => {
+const $ = id => document.getElementById(id);
+const pad = n => String(n).padStart(2, '0');
+function ymd(t){ return t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate()); }
+function fmt(t){ return ymd(t) + ' ' + pad(t.getHours()) + ':' + pad(t.getMinutes()); }
+
+$('mode').onchange = () => {
+  const dur = $('mode').value === 'dur';
+  $('durBox').hidden = !dur;
+  $('exp').hidden = dur;
+};
+
+$('issue').onclick = async () => {
+  $('err').textContent = ''; $('info').textContent = '';
   try {
-    const d = document.getElementById('dev').value.trim();
-    const e = document.getElementById('exp').value;
-    if (!d || !e) throw new Error('أدخل رقم الجهاز وتاريخ الانتهاء');
-    const key = await crypto.subtle.importKey('pkcs8', unpem(document.getElementById('pk').value), algo, false, ['sign']);
-    const payload = enc.encode(JSON.stringify({ d, e }));
+    const d = $('dev').value.trim();
+    if (!d) throw new Error('أدخل رقم الجهاز');
+    let payloadObj, endText;
+    if ($('mode').value === 'dur') {
+      const n = parseInt($('num').value, 10);
+      if (!n || n < 1) throw new Error('أدخل مدة صحيحة (رقم 1 فأكثر)');
+      const t = new Date();
+      const u = $('unit').value;
+      if (u === 'm') t.setMinutes(t.getMinutes() + n);
+      else if (u === 'h') t.setHours(t.getHours() + n);
+      else if (u === 'd') t.setDate(t.getDate() + n);
+      else if (u === 'mo') t.setMonth(t.getMonth() + n);
+      else t.setFullYear(t.getFullYear() + n);
+      // x = لحظة الانتهاء بالمللي ثانية، e = تاريخها (للتوافق مع النسخ القديمة من التطبيق)
+      payloadObj = { d, e: ymd(t), x: t.getTime() };
+      endText = fmt(t);
+    } else {
+      const e = $('exp').value;
+      if (!e) throw new Error('أدخل تاريخ الانتهاء');
+      payloadObj = { d, e };
+      endText = e + ' (نهاية اليوم)';
+    }
+    const key = await crypto.subtle.importKey('pkcs8', unpem($('pk').value), algo, false, ['sign']);
+    const payload = enc.encode(JSON.stringify(payloadObj));
     const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, payload);
-    document.getElementById('out').value = urlb64(payload) + '.' + urlb64(sig);
-  } catch (x) { alert(x.message || x); }
+    $('out').value = urlb64(payload) + '.' + urlb64(sig);
+    $('info').textContent = 'ينتهي الترخيص في: ' + endText;
+  } catch (x) { $('err').textContent = x.message || String(x); }
 };
 </script>
 </body>
